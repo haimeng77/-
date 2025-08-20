@@ -23,7 +23,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq p7zip-full rsync
+          sudo apt-get install -y jq p7zip-full
 
       - name: Prepare work dirs
         run: |
@@ -49,14 +49,24 @@ jobs:
             name=$(basename "$url")
             echo "Downloading $name"
             curl -L -H "Authorization: Bearer $GH_TOKEN" -o "_work/assets/$name" "$url"
-            mkdir -p "_work/extracted/$name"
-            7z x -y "_work/assets/$name" -o"_work/extracted/$name" >/dev/null
-            mkdir -p "_work/stage/$TAG"
-            # 仅保留文本/工程文件，且小于 5MB
-            find "_work/extracted/$name" -type f \
-              \( -iname "*.c" -o -iname "*.h" -o -iname "*.ioc" -o -iname "*.ld" -o -iname "*.s" -o -iname "*.S" -o -iname "*.md" -o -iname "*.txt" -o -iname "*.cfg" -o -iname "*.ini" -o -iname "*.csv" \) \
-              -size -5M -print0 | rsync -a --files-from=- --from0 / "_work/stage/$TAG"/
-            rm -rf "_work/extracted/$name" "_work/assets/$name"
+
+            echo "Extracting $name"
+            EXTRACT_DIR="_work/extracted/$name"
+            mkdir -p "$EXTRACT_DIR"
+            7z x -y "_work/assets/$name" -o"$EXTRACT_DIR" >/dev/null
+
+            echo "Collecting text/project files"
+            # 逐个文件拣选并复制到 stage，保留相对目录结构；兼容中文与空格路径
+            while IFS= read -r -d '' f; do
+              rel="${f#"$EXTRACT_DIR/"}"                  # 变成相对路径
+              dest="_work/stage/$TAG/$rel"
+              mkdir -p "$(dirname "$dest")"
+              cp -p "$f" "$dest"
+            done < <(find "$EXTRACT_DIR" -type f \
+                        \( -iname "*.c" -o -iname "*.h" -o -iname "*.ioc" -o -iname "*.ld" -o -iname "*.s" -o -iname "*.S" -o -iname "*.md" -o -iname "*.txt" -o -iname "*.cfg" -o -iname "*.ini" -o -iname "*.csv" \) \
+                        -size -5M -print0)
+
+            rm -rf "$EXTRACT_DIR" "_work/assets/$name"
           done
 
       - name: Switch/create mirror branch
