@@ -1,0 +1,9 @@
+{
+  "updated_at": "2025-08-20T15:08:21Z",
+  "raw_prefix": "https://raw.githubusercontent.com/haimeng77/electronic-fursuit-program/source-mirror/",
+  "root": "阿波罗开发板/Core",
+  "files": [
+
+    "Inc/bsp_fmc_sdram.h",    "Inc/fmc.h",    "Inc/gpio.h",    "Inc/ltdc.h",    "Inc/main.h",    "Inc/stm32h7xx_hal_conf.h",    "Inc/stm32h7xx_it.h",    "Inc/usart.h",    "Src/bsp_fmc_sdram.c",    "Src/fmc.c",    "Src/gpio.c",    "Src/ltdc.c",    "Src/main.c",    "Src/retarget.c",    "Src/stm32h7xx_hal_msp.c",    "Src/stm32h7xx_it.c",    "Src/syscalls.c",    "Src/sysmem.c",    "Src/system_stm32h7xx.c",    "Src/usart.c",    "Startup/startup_stm32h743iitx.s"
+  ]
+}
