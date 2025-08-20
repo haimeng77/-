@@ -1,11 +1,11 @@
 {
-  "version": "v2025.08.20-02",
-  "updated_at": "2025-08-20T13:16:19Z",
-  "mirror_root": "https://raw.githubusercontent.com/haimeng77/electronic-fursuit-program/source-mirror/releases/v2025.08.20-02/",
+  "version": "v2025.08.20-01",
+  "updated_at": "2025-08-20T13:40:29Z",
+  "mirror_root": "https://raw.githubusercontent.com/haimeng77/electronic-fursuit-program/source-mirror/releases/v2025.08.20-01/",
   "assets": [
     {
-      "name": "licheng_HAL.zip",
-      "url": "https://github.com/haimeng77/electronic-fursuit-program/releases/download/v2025.08.20-02/licheng_HAL.zip"
+      "name": "licheng_jicunqi.zip",
+      "url": "https://github.com/haimeng77/electronic-fursuit-program/releases/download/v2025.08.20-01/licheng_jicunqi.zip"
     }
   ]
 }

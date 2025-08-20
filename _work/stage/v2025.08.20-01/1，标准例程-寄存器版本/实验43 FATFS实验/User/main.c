@@ -1,0 +1,157 @@
+/**
+ ****************************************************************************************************
+ * @file        main.c
+ * @author      正点原子团队(ALIENTEK)
+ * @version     V1.0
+ * @date        2023-03-24
+ * @brief       FATFS 实验
+ * @license     Copyright (c) 2022-2032, 广州市星翼电子科技有限公司
+ ****************************************************************************************************
+ * @attention
+ *
+ * 实验平台:正点原子 阿波罗 H743开发板
+ * 在线视频:www.yuanzige.com
+ * 技术论坛:www.openedv.com
+ * 公司网址:www.alientek.com
+ * 购买地址:openedv.taobao.com
+ *
+ ****************************************************************************************************
+ */
+
+#include "./SYSTEM/sys/sys.h"
+#include "./SYSTEM/usart/usart.h"
+#include "./SYSTEM/delay/delay.h"
+#include "./BSP/LED/led.h"
+#include "./BSP/KEY/key.h"
+#include "./BSP/MPU/mpu.h"
+#include "./BSP/LCD/lcd.h"
+#include "./BSP/SDRAM/sdram.h"
+#include "./USMART/usmart.h"
+#include "./MALLOC/malloc.h"
+#include "./BSP/NAND/ftl.h"
+#include "./FATFS/exfuns/exfuns.h"
+#include "./BSP/NORFLASH/norflash.h"
+#include "./BSP/SDMMC/sdmmc_sdcard.h" 
+
+
+int main(void)
+{
+    uint32_t total, free;
+    uint8_t t = 0;
+    uint8_t res = 0;
+    
+    sys_stm32_clock_init(160, 5, 2, 4);     /* 设置时钟, 400Mhz */
+    delay_init(400);                        /* 延时初始化 */
+    usart_init(100, 115200);                /* 初始化USART */
+    usmart_dev.init(100);                   /* 初始化USMART */
+    led_init();                             /* 初始化LED */
+    mpu_memory_protection();                /* 保护相关存储区域 */
+    sdram_init();                           /* 初始化SDRAM */
+    lcd_init();                             /* 初始化LCD */
+    norflash_init();                        /* 初始化W25Q256 */
+    
+    my_mem_init(SRAMIN);                    /* 初始化内部内存池(AXI) */
+    my_mem_init(SRAMEX);                    /* 初始化外部内存池(SDRAM) */
+    my_mem_init(SRAM12);                    /* 初始化SRAM12内存池(SRAM1+SRAM2) */
+    my_mem_init(SRAM4);                     /* 初始化SRAM4内存池(SRAM4) */
+    my_mem_init(SRAMDTCM);                  /* 初始化DTCM内存池(DTCM) */
+    my_mem_init(SRAMITCM);                  /* 初始化ITCM内存池(ITCM) */
+
+    lcd_show_string(30,  50, 200, 16, 16, "STM32", RED);
+    lcd_show_string(30,  70, 200, 16, 16, "FATFS TEST", RED);
+    lcd_show_string(30,  90, 200, 16, 16, "ATOM@ALIENTEK", RED);
+    lcd_show_string(30, 110, 200, 16, 16, "Use USMART for test", RED);
+
+    while (sd_init())                                                             /* 检测不到SD卡 */
+    {
+        lcd_show_string(30, 130, 200, 16, 16, "SD Card Error!", RED);
+        delay_ms(500);
+        lcd_show_string(30, 130, 200, 16, 16, "Please Check! ", RED);
+        delay_ms(500);
+        LED0_TOGGLE();                                                            /* 红灯闪烁 */
+    }
+
+    ftl_init();
+    exfuns_init();                              /* 为fatfs相关变量申请内存 */
+    f_mount(fs[0], "0:", 1);                    /* 挂载SD卡 */
+    
+    res = f_mount(fs[1], "1:", 1);              /* 挂载FLASH. */
+    if (res == 0X0D)                            /* FLASH磁盘,FAT文件系统错误,重新格式化FLASH */
+    {
+        lcd_show_string(30, 150, 200, 16, 16, "Flash Disk Formatting...", RED);    /* 格式化FLASH */
+        res = f_mkfs("1:", 0, 0, FF_MAX_SS);                                       /* 格式化FLASH,1:,盘符;0,使用默认格式化参数 */
+
+        if (res == 0)
+        {
+            f_setlabel((const TCHAR *)"1:ALIENTEK");                               /* 设置Flash磁盘的名字为：ALIENTEK */
+            lcd_show_string(30, 150, 200, 16, 16, "Flash Disk Format Finish", RED);/* 格式化完成 */
+        }
+        else
+        {
+            lcd_show_string(30, 150, 200, 16, 16, "Flash Disk Format Error ", RED);/* 格式化失败 */
+        }
+
+        delay_ms(1000);
+    }
+
+    res = f_mount(fs[2], "2:", 1);              /* 挂载NAND FLASH. */
+    if (res == 0X0D)                            /* NAND FLASH磁盘,FAT文件系统错误,重新格式化NAND FLASH */
+    {
+        lcd_show_string(30, 150, 200, 16, 16, "NAND Disk Formatting...", RED);     /* 格式化NAND FLASH */
+        res = f_mkfs("2:", 0, 0, FF_MAX_SS);                                       /* 格式化NAND FLASH,2:,盘符;0,使用默认格式化参数 */
+
+        if (res == 0)
+        {
+            f_setlabel((const TCHAR *)"2:NANDDISK");                               /* 设置Flash磁盘的名字为：NANDDISK */
+            lcd_show_string(30, 150, 200, 16, 16, "NAND Disk Format Finish", RED); /* 格式化完成 */
+        }
+        else
+        {
+            lcd_show_string(30, 150, 200, 16, 16, "NAND Disk Format Error ", RED); /* 格式化失败 */
+        }
+
+        delay_ms(1000);
+    }
+
+    lcd_fill(30, 150, 240, 150 + 16, WHITE);                                        /* 清除显示 */
+
+    while (exfuns_get_free((uint8_t *)"0:", &total, &free))                         /* 得到SD卡的总容量和剩余容量 */
+    {
+        lcd_show_string(30, 150, 200, 16, 16, "SD Card Fatfs Error!", RED);
+        delay_ms(200);
+        lcd_fill(30, 150, 240, 150 + 16, WHITE);                                    /* 清除显示 */
+        delay_ms(200);
+        LED0_TOGGLE();                                                              /* 红灯闪烁 */
+    }
+
+    lcd_show_string(30, 150, 200, 16, 16, "FATFS OK!", BLUE);     
+    lcd_show_string(30, 170, 200, 16, 16, "SD Total Size:     MB", BLUE);
+    lcd_show_string(30, 190, 200, 16, 16, "SD  Free Size:     MB", BLUE);
+    lcd_show_num(30 + 8 * 14, 170, total >> 10, 5, 16, BLUE);                       /* 显示SD卡总容量 MB */
+    lcd_show_num(30 + 8 * 14, 190, free >> 10, 5, 16, BLUE);                        /* 显示SD卡剩余容量 MB */
+
+    while(1)
+    {
+        t++; 
+        delay_ms(200);
+        LED0_TOGGLE();                                                              /* 红灯闪烁 */
+    } 
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
