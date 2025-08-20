@@ -4,24 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to mirror (e.g. v2025.08.20-02)'
+        description: 'Release tag to mirror (e.g., v2025.08.20-02)'
         required: true
         type: string
 
 permissions:
   contents: write
 
-env:
-  MIRROR_BRANCH: source-mirror
-  KEEP_GLOBS: "*.c *.h *.ioc *.ld *.s *.S *.md *.txt *.cfg *.ini *.csv"
-
 jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (full history)
+      - name: Check out repository
         uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
 
       - name: Install tools
         run: |
@@ -30,71 +27,73 @@ jobs:
 
       - name: Prepare work dirs
         run: |
-          rm -rf _work && mkdir -p _work/assets _work/extracted _work/stage
+          rm -rf _work
+          mkdir -p _work/assets _work/extracted _work/stage
 
-      - name: Resolve tag & download all assets
-        env: { GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+      - name: Resolve tag
+        id: vars
+        run: echo "TAG=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+
+      - name: Download assets for tag and extract sources
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ github.event.inputs.tag }}"
-          echo "TAG=$TAG" | tee -a $GITHUB_ENV
+          set -e
+          TAG="${{ steps.vars.outputs.TAG }}"
           API="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/$TAG"
           ASSET_URLS=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "$API" | jq -r '.assets[].browser_download_url')
           if [ -z "$ASSET_URLS" ]; then
             echo "No assets found for tag $TAG"; exit 1
           fi
           for url in $ASSET_URLS; do
-            name="$(basename "$url")"
+            name=$(basename "$url")
             echo "Downloading $name"
             curl -L -H "Authorization: Bearer $GH_TOKEN" -o "_work/assets/$name" "$url"
             mkdir -p "_work/extracted/$name"
             7z x -y "_work/assets/$name" -o"_work/extracted/$name" >/dev/null
             mkdir -p "_work/stage/$TAG"
             # 仅保留文本/工程文件，且小于 5MB
-            for pat in $KEEP_GLOBS; do
-              find "_work/extracted/$name" -type f -iname "$pat" -size -5M -print0 | \
-                rsync -a --files-from=- --from0 / "_work/stage/$TAG"/
-            done
+            find "_work/extracted/$name" -type f \
+              \( -iname "*.c" -o -iname "*.h" -o -iname "*.ioc" -o -iname "*.ld" -o -iname "*.s" -o -iname "*.S" -o -iname "*.md" -o -iname "*.txt" -o -iname "*.cfg" -o -iname "*.ini" -o -iname "*.csv" \) \
+              -size -5M -print0 | rsync -a --files-from=- --from0 / "_work/stage/$TAG"/
             rm -rf "_work/extracted/$name" "_work/assets/$name"
           done
 
       - name: Switch/create mirror branch
         run: |
-          git fetch origin "${MIRROR_BRANCH}:${MIRROR_BRANCH}" || true
-          git switch "${MIRROR_BRANCH}" || git switch -c "${MIRROR_BRANCH}"
+          git fetch origin source-mirror:source-mirror || true
+          git switch source-mirror || git switch -c source-mirror
 
       - name: Sync to releases/<tag>
         run: |
-          TAG="${{ env.TAG }}"
+          TAG="${{ steps.vars.outputs.TAG }}"
           mkdir -p "releases/$TAG"
           rsync -a --delete "_work/stage/$TAG"/ "releases/$TAG"/
 
-      - name: Generate per-tag index.json
+      - name: Generate indexes and latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ env.TAG }}"
+          TAG="${{ steps.vars.outputs.TAG }}"
+          # 每个 tag 的文件清单
           find "releases/$TAG" -type f -printf '%P\n' | \
-            jq -R -s '{tag:"'"$TAG"'", generated_at:now|todate, files:(split("\n")|map(select(length>0)))}' \
+            jq -R -s '{tag:"'"$TAG"'",generated_at:now|todate,files:(split("\n")|map(select(length>0)))}' \
             > "releases/$TAG/index.json"
-
-      - name: Update mirror_index.json & latest.json
-        run: |
-          # 所有已镜像的 tag 列表
+          # 全部 tag 索引
           find releases -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -r | \
             jq -R -s '{tags:(split("\n")|map(select(length>0)))}' > mirror_index.json
-          # 把“最新一次运行的 tag”写入 latest.json
-          TAG="${{ env.TAG }}"
-          MIRROR_ROOT="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${MIRROR_BRANCH}/releases/${TAG}/"
-          # 取该 tag 的资产清单
+          # latest.json 指向本次 tag
           API="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/$TAG"
-          ASSETS_JSON=$(curl -s "$API" | jq -c '[.assets[] | {name:.name, url:.browser_download_url}]')
+          ASSETS_JSON=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "$API" | jq -c '[.assets[] | {name:.name, url:.browser_download_url}]')
+          MIRROR_ROOT="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/source-mirror/releases/${TAG}/"
           jq -n --arg ver "$TAG" --arg root "$MIRROR_ROOT" --arg now "$(date -u +%FT%TZ)" \
                 --argjson assets "$ASSETS_JSON" \
-                '{version:$ver, updated_at:$now, mirror_root:$root, assets:$assets}' \
-                > latest.json
+                '{version:$ver,updated_at:$now,mirror_root:$root,assets:$assets}' > latest.json
 
-      - name: Commit & push
+      - name: Commit and push
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "mirror: ${{ env.TAG }} → source-mirror" || echo "Nothing to commit"
-          git push origin "${MIRROR_BRANCH}"
+          git commit -m "mirror: ${{ steps.vars.outputs.TAG }}" || echo "Nothing to commit"
+          git push origin source-mirror
