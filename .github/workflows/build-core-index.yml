@@ -1,0 +1,54 @@
+name: Build core_index.json (source-mirror)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [source-mirror]
+    paths:
+      - '阿波罗开发板/**'
+
+permissions:
+  contents: write
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Generate index
+        run: |
+          set -e
+          BR=source-mirror
+          git fetch origin $BR:$BR || true
+          git switch $BR
+
+          ROOT="阿波罗开发板/Core"
+          RAW_PREFIX="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${BR}/"
+          # 收集可阅读的文本/工程文件；>2MB 的跳过
+          TMP="$(mktemp)"
+          find "$ROOT" -type f \
+            \( -iname "*.c" -o -iname "*.h" -o -iname "*.ioc" -o -iname "*.ld" -o -iname "*.s" -o -iname "*.S" -o -iname "*.md" -o -iname "*.txt" -o -iname "*.cfg" -o -iname "*.ini" \) \
+            -size -2M -printf '%P\n' | sort > "$TMP"
+
+          NOW="$(date -u +%FT%TZ)"
+          {
+            echo '{'
+            echo '  "updated_at": "'"$NOW"'",'
+            echo '  "raw_prefix": "'"$RAW_PREFIX"'",'
+            echo '  "root": "'"$ROOT"'",'
+            echo '  "files": ['
+            paste -sd, - <(sed 's/.*/    "&"/' "$TMP")
+            echo '  ]'
+            echo '}'
+          } > core_index.json
+          rm -f "$TMP"
+
+      - name: Commit index
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add core_index.json
+          git commit -m "chore: update core_index.json" || echo "no changes"
+          git push origin HEAD
