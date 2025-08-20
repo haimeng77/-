@@ -1,0 +1,101 @@
+name: Source Mirror from Releases
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  MIRROR_BRANCH: source-mirror
+  KEEP_GLOBS: "*.c *.h *.ioc *.ld *.s *.S *.md *.txt *.cfg *.ini *.csv"
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq p7zip-full
+
+      - name: Prepare work dirs
+        run: |
+          rm -rf _work && mkdir -p _work/assets _work/extracted _work/stage
+
+      - name: Download all zip assets of this Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="$(jq -r '.release.tag_name' "$GITHUB_EVENT_PATH")"
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          # 逐个下载，避免磁盘爆掉
+          jq -r '.release.assets[].browser_download_url' "$GITHUB_EVENT_PATH" | while read -r url; do
+            name="$(basename "$url")"
+            echo "Downloading $name"
+            curl -L -H "Authorization: Bearer $GH_TOKEN" -o "_work/assets/$name" "$url"
+            # 解压到临时目录（7z 更好处理中文名）
+            mkdir -p "_work/extracted/$name"
+            7z x -y "_work/assets/$name" -o"_work/extracted/$name" >/dev/null
+            # 仅保留源码/工程文本、小文件
+            shopt -s nullglob
+            mkdir -p "_work/stage/$TAG"
+            # 复制符合通配的文本文件
+            for pat in $KEEP_GLOBS; do
+              find "_work/extracted/$name" -type f -iname "$pat" -size -5M -print0 | \
+                rsync -a --files-from=- --from0 / "_work/stage/$TAG"/
+            done
+            # 节省空间
+            rm -rf "_work/extracted/$name" "_work/assets/$name"
+          done
+
+      - name: Switch to mirror branch
+        run: |
+          git fetch origin "${MIRROR_BRANCH}:${MIRROR_BRANCH}" || true
+          git switch "${MIRROR_BRANCH}"
+
+      - name: Sync staged files to releases/<tag>
+        run: |
+          TAG="${{ env.TAG }}"
+          mkdir -p "releases/$TAG"
+          rsync -a --delete "_work/stage/$TAG"/ "releases/$TAG"/
+
+      - name: Generate per-tag index.json
+        run: |
+          TAG="${{ env.TAG }}"
+          find "releases/$TAG" -type f -printf '%P\n' | \
+            jq -R -s '{tag:"'"$TAG"'", generated_at:now|todate, files: (split("\n")|map(select(length>0)))}' \
+            > "releases/$TAG/index.json"
+
+      - name: Generate mirror_index.json (all tags)
+        run: |
+          find releases -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -r | \
+            jq -R -s '{tags:(split("\n")|map(select(length>0)))}' > mirror_index.json
+
+      - name: Generate latest.json at mirror root
+        run: |
+          TAG="${{ env.TAG }}"
+          # 从事件里取资产清单
+          ASSETS_JSON=$(jq -c '[.release.assets[] | {name:.name, url:.browser_download_url}]' "$GITHUB_EVENT_PATH")
+          MIRROR_ROOT="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${MIRROR_BRANCH}/releases/${TAG}/"
+          jq -n --arg ver "$TAG" \
+                --arg root "$MIRROR_ROOT" \
+                --arg now "$(date -u +%FT%TZ)" \
+                --argjson assets "$ASSETS_JSON" \
+                '{version:$ver, updated_at:$now, mirror_root:$root, assets:$assets}' \
+                > latest.json
+
+      - name: Commit & push mirror
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "mirror: ${{ env.TAG }} → source-mirror" || echo "Nothing to commit"
+          git push origin "${MIRROR_BRANCH}"
